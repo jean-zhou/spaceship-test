@@ -1,10 +1,14 @@
 import { Module } from '@nestjs/common';
-import { AppController } from './app.controller.js';
-import { AppService } from './app.service.js';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { DashbordModule } from './dashbord/dashbord.module.js';
 
 @Module({
-  imports: [],
-  controllers: [AppController],
-  providers: [AppService],
+  imports: [
+    TypeOrmModule.forRoot({
+      type: 'better-sqlite3',
+      database: 'data/app.sqlite',
+    }),
+    DashbordModule
+  ],
 })
-export class AppModule {}
+export class AppModule { }

@@ -143,6 +143,51 @@ describe('DashbordService logistics analytics', () => {
     });
   });
 
+  it('returns monthly order volume and status mix for the filtered dashboard charts', async () => {
+    await expect(service.getLogisticsCharts({})).resolves.toEqual({
+      monthlyOrderVolume: [
+        { month: '2025-01', orders: 2 },
+        { month: '2025-02', orders: 0 },
+        { month: '2025-03', orders: 0 },
+        { month: '2025-04', orders: 1 },
+        { month: '2025-05', orders: 0 },
+        { month: '2025-06', orders: 0 },
+        { month: '2025-07', orders: 1 },
+        { month: '2025-08', orders: 0 },
+        { month: '2025-09', orders: 0 },
+        { month: '2025-10', orders: 0 },
+        { month: '2025-11', orders: 0 },
+        { month: '2025-12', orders: 0 },
+      ],
+      statusMix: [
+        { status: 'delivered', label: 'delivered', count: 2, percentage: 50 },
+        { status: 'delayed', label: 'delayed', count: 1, percentage: 25 },
+        { status: 'in_transit', label: 'in transit', count: 1, percentage: 25 },
+      ],
+    });
+  });
+
+  it('applies dashboard chart filters while preserving the selected month range', async () => {
+    await expect(
+      service.getLogisticsCharts({
+        dateRange: 'q1',
+        carrier: 'UPS',
+        region: 'US-W',
+        status: 'delayed',
+        search: 'brush',
+      }),
+    ).resolves.toEqual({
+      monthlyOrderVolume: [
+        { month: '2025-01', orders: 1 },
+        { month: '2025-02', orders: 0 },
+        { month: '2025-03', orders: 0 },
+      ],
+      statusMix: [
+        { status: 'delayed', label: 'delayed', count: 1, percentage: 100 },
+      ],
+    });
+  });
+
   it('returns filtered logistics orders with pagination metadata', async () => {
     await expect(
       service.getLogisticsOrders({

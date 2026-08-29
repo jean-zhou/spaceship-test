@@ -7,6 +7,7 @@ describe('DashbordController logistics endpoints', () => {
   let service: {
     getLogisticsFilters: ReturnType<typeof vi.fn>;
     getLogisticsKpis: ReturnType<typeof vi.fn>;
+    getLogisticsCharts: ReturnType<typeof vi.fn>;
     getLogisticsOrders: ReturnType<typeof vi.fn>;
   };
 
@@ -23,6 +24,12 @@ describe('DashbordController logistics endpoints', () => {
         delayedOrders: 0,
         onTimeDeliveryRate: 100,
         averageDeliveryTimeDays: 2,
+      }),
+      getLogisticsCharts: vi.fn().mockResolvedValue({
+        monthlyOrderVolume: [{ month: '2025-01', orders: 1 }],
+        statusMix: [
+          { status: 'delivered', label: 'delivered', count: 1, percentage: 100 },
+        ],
       }),
       getLogisticsOrders: vi.fn().mockResolvedValue({
         items: [
@@ -88,6 +95,24 @@ describe('DashbordController logistics endpoints', () => {
       averageDeliveryTimeDays: 2,
     });
     expect(service.getLogisticsKpis).toHaveBeenCalledWith(query);
+  });
+
+  it('passes dashboard chart query filters to the service', async () => {
+    const query = {
+      dateRange: 'q1',
+      carrier: 'FedEx',
+      region: 'US-E',
+      status: 'delivered',
+      search: 'paper',
+    };
+
+    await expect(controller.getLogisticsCharts(query)).resolves.toEqual({
+      monthlyOrderVolume: [{ month: '2025-01', orders: 1 }],
+      statusMix: [
+        { status: 'delivered', label: 'delivered', count: 1, percentage: 100 },
+      ],
+    });
+    expect(service.getLogisticsCharts).toHaveBeenCalledWith(query);
   });
 
   it('passes logistics list query filters to the service', async () => {

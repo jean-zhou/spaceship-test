@@ -11,6 +11,7 @@ import type {
   LogisticsOrdersResponseDto,
 } from './dto/logistics-orders.response.dto.js';
 import { LogisticsOrderItemDto } from './dto/logistics-orders.response.dto.js';
+import type { LogisticsChartsResponseDto } from './dto/logistics-charts.response.dto.js';
 import type { LogisticsKpisResponseDto } from './dto/logistics-kpis.response.dto.js';
 import { UpdateDashbordDto } from './dto/update-dashbord.dto.js';
 import { LogisticsOrder } from './entities/logistics-order.entity.js';
@@ -20,6 +21,16 @@ interface RawLogisticsKpis {
   deliveredOrders: number | string | null;
   delayedOrders: number | string | null;
   averageDeliveryTimeDays: number | string | null;
+}
+
+interface RawMonthlyOrderVolume {
+  month: string;
+  orders: number | string | null;
+}
+  
+interface RawStatusMix {
+  status: string;
+  count: number | string | null;
 }
 
 @Injectable()
@@ -107,6 +118,60 @@ export class DashbordService {
           ? 0
           : roundMetric((deliveredOrders / completedOutcomes) * 100, 1),
       averageDeliveryTimeDays,
+    };
+  }
+
+  async getLogisticsCharts(
+    query: LogisticsQueryDto,
+  ): Promise<LogisticsChartsResponseDto> {
+    const [monthlyRows, statusRows] = await Promise.all([
+      this.applyLogisticsFilters(
+        this.logisticsOrders.createQueryBuilder('orders'),
+        query,
+      )
+        .select("strftime('%Y-%m', orders.order_date)", 'month')
+        .addSelect('COUNT(*)', 'orders')
+        .groupBy('month')
+        .orderBy('month', 'ASC')
+        .getRawMany<RawMonthlyOrderVolume>(),
+      this.applyLogisticsFilters(
+        this.logisticsOrders.createQueryBuilder('orders'),
+        query,
+      )
+        .select('orders.status', 'status')
+        .addSelect('COUNT(*)', 'count')
+        .groupBy('orders.status')
+        .orderBy('count', 'DESC')
+        .addOrderBy('orders.status', 'ASC')
+        .getRawMany<RawStatusMix>(),
+    ]);
+
+    const monthlyCounts = new Map(
+      monthlyRows.map((row) => [row.month, toNumber(row.orders)]),
+    );
+    const totalStatusCount = statusRows.reduce(
+      (sum, row) => sum + toNumber(row.count),
+      0,
+    );
+
+    return {
+      monthlyOrderVolume: getMonthsForRange(query.dateRange).map((month) => ({
+        month,
+        orders: monthlyCounts.get(month) ?? 0,
+      })),
+      statusMix: statusRows.map((row) => {
+        const count = toNumber(row.count);
+
+        return {
+          status: row.status,
+          label: formatStatusLabel(row.status),
+          count,
+          percentage:
+            totalStatusCount === 0
+              ? 0
+              : roundMetric((count / totalStatusCount) * 100, 1),
+        };
+      }),
     };
   }
 
@@ -215,6 +280,19 @@ function getDateRange(
   return dateRange ? (ranges[dateRange] ?? fullYear) : fullYear;
 }
 
+function getMonthsForRange(dateRange: string | undefined): string[] {
+  const { startDate, endDate } = getDateRange(dateRange);
+  const months: string[] = [];
+  const startMonth = Number(startDate.slice(5, 7));
+  const endMonth = Number(endDate.slice(5, 7));
+
+  for (let month = startMonth; month <= endMonth; month += 1) {
+    months.push(`2025-${String(month).padStart(2, '0')}`);
+  }
+
+  return months;
+}
+
 function toNumber(value: number | string | null | undefined): number {
   if (value === null || value === undefined) {
     return 0;
@@ -225,4 +303,8 @@ function toNumber(value: number | string | null | undefined): number {
 
 function roundMetric(value: number, digits: number): number {
   return Number(value.toFixed(digits));
+}
+
+function formatStatusLabel(status: string): string {
+  return status.replace(/_/g, ' ');
 }

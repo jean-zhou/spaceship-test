@@ -96,6 +96,49 @@
         </article>
       </section>
 
+      <section class="analytics-panel" aria-label="Operational dashboard charts">
+        <div class="analytics-header">
+          <div>
+            <h2>Charts</h2>
+          </div>
+          <div class="chart-legend" aria-hidden="true">
+            <span class="legend-item"><span class="swatch swatch-blue"></span>Orders</span>
+            <span class="legend-item"><span class="swatch swatch-red"></span>Delayed</span>
+            <span class="legend-item"><span class="swatch swatch-green"></span>Delivered</span>
+          </div>
+        </div>
+
+        <div v-loading="isLoadingCharts" class="analytics-body">
+          <article class="chart-box">
+            <div class="chart-title">
+              <span>Order Volume Over Time</span>
+              <span>Monthly</span>
+            </div>
+            <VChart
+              v-if="charts.monthlyOrderVolume.length > 0"
+              class="chart-stage"
+              :option="orderVolumeChartOption"
+              autoresize
+            />
+            <div v-else class="chart-empty">No order volume data</div>
+          </article>
+
+          <article class="chart-box">
+            <div class="chart-title">
+              <span>Delivery Performance</span>
+              <span>Status mix</span>
+            </div>
+            <VChart
+              v-if="charts.statusMix.length > 0"
+              class="chart-stage"
+              :option="statusMixChartOption"
+              autoresize
+            />
+            <div v-else class="chart-empty">No status mix data</div>
+          </article>
+        </div>
+      </section>
+
       <section class="orders-panel" aria-label="Filtered logistics orders">
         <div class="orders-header">
           <div>
@@ -159,12 +202,21 @@
 
 <script setup lang="ts">
 import axios from 'axios'
+import { use } from 'echarts/core'
+import { BarChart } from 'echarts/charts'
+import { GridComponent, TooltipComponent } from 'echarts/components'
+import { CanvasRenderer } from 'echarts/renderers'
 import { computed, onMounted, reactive, ref } from 'vue'
+import VChart from 'vue-echarts'
 import {
+  buildOrderVolumeChartOption,
+  buildStatusMixChartOption,
   buildKpiQuery,
   formatAverageDeliveryTime,
   formatOnTimeRate,
-} from '@/lib/logistics-dashboard'
+} from '@/utils/logistics-dashboard'
+
+use([BarChart, GridComponent, TooltipComponent, CanvasRenderer])
 
 interface LogisticsFilters {
   carriers: string[]
@@ -178,6 +230,23 @@ interface LogisticsKpis {
   delayedOrders: number
   onTimeDeliveryRate: number
   averageDeliveryTimeDays: number | null
+}
+
+interface LogisticsMonthlyOrderVolume {
+  month: string
+  orders: number
+}
+
+interface LogisticsStatusMix {
+  status: string
+  label: string
+  count: number
+  percentage: number
+}
+
+interface LogisticsCharts {
+  monthlyOrderVolume: LogisticsMonthlyOrderVolume[]
+  statusMix: LogisticsStatusMix[]
 }
 
 interface LogisticsOrderItem {
@@ -224,6 +293,11 @@ const emptyKpis: LogisticsKpis = {
   averageDeliveryTimeDays: null,
 }
 
+const emptyCharts: LogisticsCharts = {
+  monthlyOrderVolume: [],
+  statusMix: [],
+}
+
 const filters = reactive({
   dateRange: 'all',
   carrier: 'all',
@@ -233,6 +307,7 @@ const filters = reactive({
 })
 const filterOptions = ref<LogisticsFilters>(emptyFilters)
 const kpis = ref<LogisticsKpis>(emptyKpis)
+const charts = ref<LogisticsCharts>(emptyCharts)
 const orders = ref<LogisticsOrderItem[]>([])
 const ordersPagination = reactive({
   page: 1,
@@ -242,11 +317,16 @@ const ordersPagination = reactive({
 })
 const isLoadingFilters = ref(false)
 const isLoadingKpis = ref(false)
+const isLoadingCharts = ref(false)
 const isLoadingOrders = ref(false)
 const errorMessage = ref('')
 
 const isBusy = computed(
-  () => isLoadingFilters.value || isLoadingKpis.value || isLoadingOrders.value,
+  () =>
+    isLoadingFilters.value ||
+    isLoadingKpis.value ||
+    isLoadingCharts.value ||
+    isLoadingOrders.value,
 )
 
 const kpiCards = computed(() => [
@@ -287,6 +367,12 @@ const kpiCards = computed(() => [
   },
 ])
 
+const orderVolumeChartOption = computed(() =>
+  buildOrderVolumeChartOption(charts.value.monthlyOrderVolume),
+)
+
+const statusMixChartOption = computed(() => buildStatusMixChartOption(charts.value.statusMix))
+
 onMounted(async () => {
   await Promise.all([loadFilters(), refreshDashboard()])
 })
@@ -320,6 +406,22 @@ async function loadKpis() {
   }
 }
 
+async function loadCharts() {
+  isLoadingCharts.value = true
+
+  try {
+    const response = await axios.get<LogisticsCharts>('/api/dashbord/logistics/charts', {
+      params: buildLogisticsParams(),
+    })
+    charts.value = response.data
+  } catch (error) {
+    setError(error)
+    charts.value = emptyCharts
+  } finally {
+    isLoadingCharts.value = false
+  }
+}
+
 async function loadOrders() {
   isLoadingOrders.value = true
 
@@ -345,7 +447,7 @@ async function loadOrders() {
 
 async function refreshDashboard() {
   errorMessage.value = ''
-  await Promise.all([loadKpis(), loadOrders()])
+  await Promise.all([loadKpis(), loadCharts(), loadOrders()])
 }
 
 function applyFilters() {

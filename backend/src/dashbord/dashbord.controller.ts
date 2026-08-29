@@ -11,6 +11,7 @@ import {
 import { ApiOkResponse, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { DashbordService } from './dashbord.service.js';
 import { CreateDashbordDto } from './dto/create-dashbord.dto.js';
+import { LogisticsChartsResponseDto } from './dto/logistics-charts.response.dto.js';
 import { LogisticsFiltersResponseDto } from './dto/logistics-filters.response.dto.js';
 import { LogisticsKpisResponseDto } from './dto/logistics-kpis.response.dto.js';
 import { LogisticsOrdersResponseDto } from './dto/logistics-orders.response.dto.js';
@@ -46,6 +47,13 @@ export class DashbordController {
   @ApiOkResponse({ type: LogisticsKpisResponseDto })
   getLogisticsKpis(@Query() query: LogisticsQueryDto) {
     return this.dashbordService.getLogisticsKpis(query);
+  }
+
+  @Get('logistics/charts')
+  @ApiQuery({ type: LogisticsQueryDto })
+  @ApiOkResponse({ type: LogisticsChartsResponseDto })
+  getLogisticsCharts(@Query() query: LogisticsQueryDto) {
+    return this.dashbordService.getLogisticsCharts(query);
   }
 
   @Get('logistics/orders')

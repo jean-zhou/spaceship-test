@@ -1,0 +1,86 @@
+name: Deploy demo
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            backend/package-lock.json
+            frontend/package-lock.json
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm ci
+
+      - name: Build backend
+        working-directory: backend
+        run: npm run build
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: verify
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Upload deployment files to server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.JEAN_TEST_SERVER_IP }}
+          username: ${{ secrets.JEAN_TEST_SERVER_USER }}
+          key: ${{ secrets.JEAN_TEST_SERVER_SSH_PRIVATE_KEY }}
+          port: ${{ secrets.JEAN_TEST_SERVER_PORT }}
+          source: "docker-compose.yml,backend/Dockerfile,backend/.dockerignore,backend/.env.local.example,backend/package.json,backend/package-lock.json,backend/tsconfig.json,backend/tsconfig.build.json,backend/nest-cli.json,backend/src/**,backend/migrations/**,frontend/dockerfile,frontend/.dockerignore,frontend/nginx.conf,frontend/package.json,frontend/package-lock.json,frontend/tsconfig.json,frontend/tsconfig.app.json,frontend/tsconfig.node.json,frontend/vite.config.ts,frontend/vitest.config.ts,frontend/eslint.config.ts,frontend/env.d.ts,frontend/index.html,frontend/src/**,frontend/public/**"
+          target: "~/workplace/spaceship-test"
+
+      - name: Restart Docker on server
+        uses: appleboy/ssh-action@v0.1.7
+        with:
+          host: ${{ secrets.JEAN_TEST_SERVER_IP }}
+          username: ${{ secrets.JEAN_TEST_SERVER_USER }}
+          key: ${{ secrets.JEAN_TEST_SERVER_SSH_PRIVATE_KEY }}
+          port: ${{ secrets.JEAN_TEST_SERVER_PORT }}
+          script: |
+            set -e
+
+            cd "$HOME/workplace/spaceship-test"
+
+            mkdir -p backend/data
+
+            if [ ! -f backend/.env.local ]; then
+              cp backend/.env.local.example backend/.env.local
+            fi
+
+            if docker compose version >/dev/null 2>&1; then
+              COMPOSE="docker compose"
+            else
+              COMPOSE="docker-compose"
+            fi
+
+            $COMPOSE down --remove-orphans
+            $COMPOSE up -d --build
+            $COMPOSE ps

@@ -1,0 +1,27 @@
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: spaceship-test-backend
+    container_name: spaceship-test-backend
+    env_file:
+      - ./backend/.env.local
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+    volumes:
+      - ./backend/data:/usr/src/app/data
+    restart: always
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: dockerfile
+    image: spaceship-test-frontend
+    container_name: spaceship-test-frontend
+    depends_on:
+      - backend
+    ports:
+      - "${FRONTEND_PORT:-80}:80"
+    restart: always

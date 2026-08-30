@@ -3,7 +3,9 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { AiToolsService } from '../ai-tools.service.js';
 import { AiService } from '../ai.service.js';
+import { QwenOrchestratorService } from '../qwen-orchestrator.service.js';
 import { LogisticsOrder } from '../../dashbord/entities/logistics-order.entity.js';
 import { LogisticsAnalyticsService } from '../../dashbord/logistics-analytics.service.js';
 
@@ -11,8 +13,33 @@ describe('AiService category demand forecasting', () => {
   let module: TestingModule;
   let service: AiService;
   let orders: Repository<LogisticsOrder>;
+  let orchestrator: {
+    orchestrate: ReturnType<typeof vi.fn>;
+  };
 
   beforeEach(async () => {
+    orchestrator = {
+      orchestrate: vi.fn().mockResolvedValue({
+        question: 'Which carrier has the highest delay rate?',
+        selectedTool: 'query_logistics_analytics',
+        toolInput: {
+          queryType: 'ranking',
+          metric: 'delay_rate',
+          groupBy: 'carrier',
+        },
+        result: {
+          questionType: 'ranking',
+          metric: 'delay_rate',
+          groupBy: 'carrier',
+          rows: [{ group: 'Boreal', value: 66.7 }],
+        },
+        explanation: 'Top carrier by delay rate is Boreal at 66.7%.',
+        visualization: {
+          type: 'bar',
+          data: [{ group: 'Boreal', value: 66.7 }],
+        },
+      }),
+    };
     module = await Test.createTestingModule({
       imports: [
         TypeOrmModule.forRoot({
@@ -23,7 +50,15 @@ describe('AiService category demand forecasting', () => {
         }),
         TypeOrmModule.forFeature([LogisticsOrder]),
       ],
-      providers: [AiService, LogisticsAnalyticsService],
+      providers: [
+        AiService,
+        AiToolsService,
+        LogisticsAnalyticsService,
+        {
+          provide: QwenOrchestratorService,
+          useValue: orchestrator,
+        },
+      ],
     }).compile();
 
     service = module.get(AiService);
@@ -32,6 +67,18 @@ describe('AiService category demand forecasting', () => {
 
   afterEach(async () => {
     await module.close();
+  });
+
+  it('passes orchestration requests to the Qwen orchestrator', async () => {
+    const request = {
+      question: 'Which carrier has the highest delay rate?',
+    };
+
+    await expect(service.orchestrate(request)).resolves.toMatchObject({
+      selectedTool: 'query_logistics_analytics',
+      explanation: 'Top carrier by delay rate is Boreal at 66.7%.',
+    });
+    expect(orchestrator.orchestrate).toHaveBeenCalledWith(request);
   });
 
   it('rejects an unsupported category and includes available categories', async () => {

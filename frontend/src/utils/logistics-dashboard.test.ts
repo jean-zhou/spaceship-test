@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  buildAiQueryPlan,
+  buildAiVisualizationChartOption,
   buildKpiQuery,
   buildOrderVolumeChartOption,
   buildStatusMixChartOption,
@@ -59,5 +61,67 @@ describe('logistics dashboard utils', () => {
       { value: 8, percentage: 80, status: 'delivered' },
       { value: 2, percentage: 20, status: 'delayed' },
     ])
+  })
+
+  it('maps AI bar visualization rows into a chart option', () => {
+    const option = buildAiVisualizationChartOption({
+      type: 'bar',
+      data: [
+        { group: 'FedEx', value: 12.5 },
+        { group: 'UPS', value: 9.2 },
+      ],
+    })
+
+    expect(option).not.toBeNull()
+    expect(option!.xAxis.data).toEqual(['FedEx', 'UPS'])
+    expect(option!.yAxis.name).toBe('Value')
+    expect(option!.series[0]!.name).toBe('AI Query')
+    expect(option!.series[0]!.data).toEqual([12.5, 9.2])
+  })
+
+  it('maps AI line visualization points into a chart option', () => {
+    const option = buildAiVisualizationChartOption({
+      type: 'line',
+      data: [
+        { month: '2025-11', historical: 40, forecast: null },
+        { month: '2025-12', historical: null, forecast: 47 },
+      ],
+    })
+
+    expect(option).not.toBeNull()
+    expect(option!.xAxis.data).toEqual(['Nov 2025', 'Dec 2025'])
+    expect(option!.series).toHaveLength(2)
+    expect(option!.series[0]!.data).toEqual([40, null])
+    expect(option!.series[1]!.data).toEqual([null, 47])
+  })
+
+  it('returns KPI metadata for AI kpi visualizations', () => {
+    const result = buildAiVisualizationChartOption({
+      type: 'kpi',
+      data: { group: 'all', value: 27 },
+    })
+
+    expect(result).toBeNull()
+  })
+
+  it('builds a stable AI query plan from orchestration metadata', () => {
+    expect(
+      buildAiQueryPlan({
+        selectedTool: 'query_logistics_analytics',
+        toolInput: {
+          queryType: 'ranking',
+          metric: 'delay_rate',
+          groupBy: 'carrier',
+        },
+      }),
+    ).toEqual({
+      tool: 'query_logistics_analytics',
+      input: {
+        queryType: 'ranking',
+        metric: 'delay_rate',
+        groupBy: 'carrier',
+      },
+      sourceOfTruth: 'computed_by_backend_tool',
+    })
   })
 })

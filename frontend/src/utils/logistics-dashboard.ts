@@ -50,12 +50,18 @@ interface StatusSeriesDatum {
 
 interface SeriesOption {
   name: string
-  type: 'bar'
-  data: number[] | StatusSeriesDatum[]
-  barMaxWidth: number
-  itemStyle: {
+  type: 'bar' | 'line'
+  data: Array<number | null> | StatusSeriesDatum[]
+  barMaxWidth?: number
+  smooth?: boolean
+  connectNulls?: boolean
+  symbolSize?: number
+  itemStyle?: {
     borderRadius: number[]
     color: string | ((params: unknown) => string)
+  }
+  lineStyle?: {
+    width: number
   }
   label?: {
     show: boolean
@@ -84,6 +90,37 @@ interface LogisticsChartOption extends EChartsOption {
   xAxis: AxisOption
   yAxis: AxisOption
   series: SeriesOption[]
+}
+
+export type AiVisualizationType = 'line' | 'bar' | 'table' | 'kpi'
+
+export interface AiVisualization {
+  type: AiVisualizationType
+  data: unknown
+}
+
+export interface AiQueryPlanInput {
+  selectedTool: string
+  toolInput: Record<string, unknown>
+}
+
+export interface AiQueryPlan {
+  tool: string
+  input: Record<string, unknown>
+  sourceOfTruth: 'computed_by_backend_tool'
+}
+
+interface AiBarDatum {
+  group?: string
+  value: number
+}
+
+interface AiLineDatum {
+  month?: string
+  group?: string
+  historical?: number | null
+  forecast?: number | null
+  value?: number | null
 }
 
 export function buildKpiQuery(filters: LogisticsDashboardFilters): string {
@@ -224,10 +261,174 @@ export function buildStatusMixChartOption(statusMix: LogisticsStatusMix[]): Logi
   }
 }
 
+export function buildAiVisualizationChartOption(
+  visualization: AiVisualization,
+): LogisticsChartOption | null {
+  if (visualization.type === 'bar') {
+    return buildAiBarChartOption(visualization.data)
+  }
+
+  if (visualization.type === 'line') {
+    return buildAiLineChartOption(visualization.data)
+  }
+
+  return null
+}
+
+export function buildAiQueryPlan(input: AiQueryPlanInput): AiQueryPlan {
+  return {
+    tool: input.selectedTool,
+    input: input.toolInput,
+    sourceOfTruth: 'computed_by_backend_tool',
+  }
+}
+
+function buildAiBarChartOption(data: unknown): LogisticsChartOption | null {
+  if (!Array.isArray(data)) {
+    return null
+  }
+
+  const rows = data.filter(isAiBarDatum)
+
+  if (rows.length === 0) {
+    return null
+  }
+
+  return {
+    animationDuration: 450,
+    color: [ORDER_VOLUME_COLOR],
+    grid: {
+      top: 24,
+      right: 18,
+      bottom: 34,
+      left: 46,
+      containLabel: true,
+    },
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: { type: 'shadow' },
+      valueFormatter: (value) => formatNumber(value),
+    },
+    xAxis: {
+      type: 'category',
+      data: rows.map((item) => item.group ?? 'Result'),
+      axisTick: { show: false },
+      axisLine: { lineStyle: { color: '#dbe3e7' } },
+      axisLabel: { color: '#65727c' },
+    },
+    yAxis: {
+      type: 'value',
+      name: 'Value',
+      splitLine: { lineStyle: { color: '#eef2f4' } },
+      axisLabel: { color: '#65727c' },
+      nameTextStyle: { color: '#65727c', fontWeight: 700 },
+    },
+    series: [
+      {
+        name: 'AI Query',
+        type: 'bar',
+        data: rows.map((item) => item.value),
+        barMaxWidth: 32,
+        itemStyle: {
+          borderRadius: [4, 4, 0, 0],
+          color: ORDER_VOLUME_COLOR,
+        },
+      },
+    ],
+  }
+}
+
+function buildAiLineChartOption(data: unknown): LogisticsChartOption | null {
+  if (!Array.isArray(data)) {
+    return null
+  }
+
+  const rows = data.filter(isAiLineDatum)
+
+  if (rows.length === 0) {
+    return null
+  }
+
+  return {
+    animationDuration: 450,
+    color: [ORDER_VOLUME_COLOR, STATUS_COLORS.delayed ?? '#c24136'],
+    grid: {
+      top: 24,
+      right: 18,
+      bottom: 34,
+      left: 46,
+      containLabel: true,
+    },
+    tooltip: {
+      trigger: 'axis',
+      valueFormatter: (value) => formatNumber(value),
+    },
+    xAxis: {
+      type: 'category',
+      data: rows.map((item) => formatAiLineLabel(item.month ?? item.group ?? '')),
+      axisTick: { show: false },
+      axisLine: { lineStyle: { color: '#dbe3e7' } },
+      axisLabel: { color: '#65727c' },
+    },
+    yAxis: {
+      type: 'value',
+      name: 'Quantity',
+      minInterval: 1,
+      splitLine: { lineStyle: { color: '#eef2f4' } },
+      axisLabel: { color: '#65727c' },
+      nameTextStyle: { color: '#65727c', fontWeight: 700 },
+    },
+    series: [
+      {
+        name: 'Historical',
+        type: 'line',
+        data: rows.map((item) => item.historical ?? item.value ?? null),
+        smooth: true,
+        connectNulls: false,
+        symbolSize: 7,
+        lineStyle: { width: 3 },
+      },
+      {
+        name: 'Forecast',
+        type: 'line',
+        data: rows.map((item) => item.forecast ?? null),
+        smooth: true,
+        connectNulls: false,
+        symbolSize: 7,
+        lineStyle: { width: 3 },
+      },
+    ],
+  }
+}
+
 function formatMonthLabel(month: string): string {
   const date = new Date(`${month}-01T00:00:00Z`)
 
   return new Intl.DateTimeFormat('en-US', { month: 'short', timeZone: 'UTC' }).format(date)
+}
+
+function formatAiLineLabel(label: string): string {
+  if (/^\d{4}-\d{2}$/.test(label)) {
+    const date = new Date(`${label}-01T00:00:00Z`)
+
+    return new Intl.DateTimeFormat('en-US', {
+      month: 'short',
+      year: 'numeric',
+      timeZone: 'UTC',
+    }).format(date)
+  }
+
+  return label || 'Result'
+}
+
+function formatNumber(value: unknown): string {
+  if (typeof value !== 'number') {
+    return ''
+  }
+
+  return new Intl.NumberFormat('en-US', {
+    maximumFractionDigits: 2,
+  }).format(value)
 }
 
 function getStatusColor(status: string): string {
@@ -257,6 +458,31 @@ function isStatusSeriesDatum(value: unknown): value is StatusSeriesDatum {
     typeof value.value === 'number' &&
     typeof value.percentage === 'number' &&
     typeof value.status === 'string'
+  )
+}
+
+function isAiBarDatum(value: unknown): value is AiBarDatum {
+  return (
+    value !== null &&
+    typeof value === 'object' &&
+    'value' in value &&
+    typeof value.value === 'number'
+  )
+}
+
+function isAiLineDatum(value: unknown): value is AiLineDatum {
+  if (value === null || typeof value !== 'object') {
+    return false
+  }
+
+  const candidate = value as AiLineDatum
+
+  return (
+    typeof candidate.month === 'string' ||
+    typeof candidate.group === 'string' ||
+    typeof candidate.historical === 'number' ||
+    typeof candidate.forecast === 'number' ||
+    typeof candidate.value === 'number'
   )
 }
 

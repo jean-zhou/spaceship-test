@@ -5,12 +5,33 @@ import { AiService } from '../ai.service.js';
 describe('AiController forecasting endpoints', () => {
   let controller: AiController;
   let service: {
+    orchestrate: ReturnType<typeof vi.fn>;
     forecastCategoryDemand: ReturnType<typeof vi.fn>;
     queryLogisticsAnalytics: ReturnType<typeof vi.fn>;
   };
 
   beforeEach(async () => {
     service = {
+      orchestrate: vi.fn().mockResolvedValue({
+        question: 'Which carrier has the highest delay rate?',
+        selectedTool: 'query_logistics_analytics',
+        toolInput: {
+          queryType: 'ranking',
+          metric: 'delay_rate',
+          groupBy: 'carrier',
+        },
+        result: {
+          questionType: 'ranking',
+          metric: 'delay_rate',
+          groupBy: 'carrier',
+          rows: [{ group: 'Boreal', value: 66.7 }],
+        },
+        explanation: 'Top carrier by delay rate is Boreal at 66.7%.',
+        visualization: {
+          type: 'bar',
+          data: [{ group: 'Boreal', value: 66.7 }],
+        },
+      }),
       forecastCategoryDemand: vi.fn().mockResolvedValue({
         category: 'PAPER',
         method: 'moving_average',
@@ -119,5 +140,17 @@ describe('AiController forecasting endpoints', () => {
       }),
     );
     expect(service.queryLogisticsAnalytics).toHaveBeenCalledWith(request);
+  });
+
+  it('passes natural language orchestration questions to the service', async () => {
+    const request = {
+      question: 'Which carrier has the highest delay rate?',
+    };
+
+    await expect(controller.orchestrate(request)).resolves.toMatchObject({
+      selectedTool: 'query_logistics_analytics',
+      explanation: 'Top carrier by delay rate is Boreal at 66.7%.',
+    });
+    expect(service.orchestrate).toHaveBeenCalledWith(request);
   });
 });

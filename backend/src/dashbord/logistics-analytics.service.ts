@@ -152,6 +152,7 @@ export class LogisticsAnalyticsService {
     }
 
     const rawRows = await builder.getRawMany<RawAnalyticsRow>();
+    console.log('Raw analytics rows:', rawRows);
     const rows = rawRows
       .map((row) => ({
         row: toAnalyticsRow(row, request.metric, groupBy),
@@ -171,7 +172,7 @@ export class LogisticsAnalyticsService {
         ),
       )
       .slice(0, request.limit ?? defaultLimit(request.queryType));
-
+    console.log('Filtered and sorted analytics rows:', rows);
     return {
       questionType: request.queryType,
       metric: request.metric,
@@ -394,8 +395,8 @@ function buildSummary(
     request.metric === 'delayed_orders' &&
     request.groupBy === 'week'
   ) {
+    console.log('Rows for summary:', rows);
     const delayedOrders = rows.reduce((sum, row) => sum + row.value, 0);
-
     return `Found ${delayedOrders} delayed orders across ${rows.length} week groups.`;
   }
 
@@ -409,7 +410,7 @@ function buildSummary(
 
     return `${rankLabel} carrier by delay rate is ${rows[0].group} at ${rows[0].value}%.`;
   }
-
+  console.log('Rows for summary:', rows);
   return `Returned ${rows.length} ${request.metric} analytics rows.`;
 }
 

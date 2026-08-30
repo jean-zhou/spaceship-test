@@ -96,47 +96,107 @@
         </article>
       </section>
 
-      <section class="analytics-panel" aria-label="Operational dashboard charts">
-        <div class="analytics-header">
-          <div>
-            <h2>Charts</h2>
+      <section class="insights-layout" aria-label="Dashboard insights">
+        <section class="analytics-panel" aria-label="Operational dashboard charts">
+          <div class="analytics-header">
+            <div>
+              <h2>Charts</h2>
+            </div>
+            <div class="chart-legend" aria-hidden="true">
+              <span class="legend-item"><span class="swatch swatch-blue"></span>Orders</span>
+              <span class="legend-item"><span class="swatch swatch-red"></span>Delayed</span>
+              <span class="legend-item"><span class="swatch swatch-green"></span>Delivered</span>
+            </div>
           </div>
-          <div class="chart-legend" aria-hidden="true">
-            <span class="legend-item"><span class="swatch swatch-blue"></span>Orders</span>
-            <span class="legend-item"><span class="swatch swatch-red"></span>Delayed</span>
-            <span class="legend-item"><span class="swatch swatch-green"></span>Delivered</span>
-          </div>
-        </div>
 
-        <div v-loading="isLoadingCharts" class="analytics-body">
-          <article class="chart-box">
-            <div class="chart-title">
-              <span>Order Volume Over Time</span>
-              <span>Monthly</span>
+          <div v-loading="isLoadingCharts" class="analytics-body">
+            <article class="chart-box">
+              <div class="chart-title">
+                <span>Order Volume Over Time</span>
+                <span>Monthly</span>
+              </div>
+              <VChart
+                v-if="charts.monthlyOrderVolume.length > 0"
+                class="chart-stage"
+                :option="orderVolumeChartOption"
+                autoresize
+              />
+              <div v-else class="chart-empty">No order volume data</div>
+            </article>
+
+            <article class="chart-box">
+              <div class="chart-title">
+                <span>Delivery Performance</span>
+                <span>Status mix</span>
+              </div>
+              <VChart
+                v-if="charts.statusMix.length > 0"
+                class="chart-stage"
+                :option="statusMixChartOption"
+                autoresize
+              />
+              <div v-else class="chart-empty">No status mix data</div>
+            </article>
+          </div>
+        </section>
+
+        <aside class="ai-query-panel" aria-label="AI Query">
+          <div class="ai-query-header">
+            <div>
+              <h2>AI Query</h2>
+              <p>Natural language is routed to validated analytical tools.</p>
+            </div>
+          </div>
+
+          <form class="ai-query-form" @submit.prevent="runAiQuery">
+            <label for="aiQuestion">Question</label>
+            <textarea
+              id="aiQuestion"
+              v-model="aiQuestion"
+              rows="2"
+              placeholder="Ask about delayed orders, carriers, or demand forecasts"
+              :disabled="isRunningAiQuery"
+            ></textarea>
+
+            <div class="ai-query-actions">
+              <button
+                v-for="prompt in aiShortcutPrompts"
+                :key="prompt.label"
+                class="prompt-chip"
+                type="button"
+                :disabled="isRunningAiQuery"
+                @click="runShortcutPrompt(prompt.question)"
+              >
+                {{ prompt.label }}
+              </button>
+            </div>
+
+            <button class="primary-btn ai-run-btn" type="submit" :disabled="isRunningAiQuery">
+              {{ isRunningAiQuery ? 'Running' : 'Run' }}
+            </button>
+          </form>
+
+          <p v-if="aiQueryError" class="ai-query-error" role="alert">
+            {{ aiQueryError }}
+          </p>
+
+          <div v-if="aiResult" class="ai-query-result">
+            <p class="ai-answer">{{ aiResult.explanation }}</p>
+
+            <div v-if="aiKpiValue" class="ai-kpi-result">
+              <span>Computed result</span>
+              <strong>{{ aiKpiValue }}</strong>
             </div>
             <VChart
-              v-if="charts.monthlyOrderVolume.length > 0"
-              class="chart-stage"
-              :option="orderVolumeChartOption"
+              v-else-if="aiVisualizationChartOption"
+              class="ai-query-chart"
+              :option="aiVisualizationChartOption"
               autoresize
             />
-            <div v-else class="chart-empty">No order volume data</div>
-          </article>
-
-          <article class="chart-box">
-            <div class="chart-title">
-              <span>Delivery Performance</span>
-              <span>Status mix</span>
-            </div>
-            <VChart
-              v-if="charts.statusMix.length > 0"
-              class="chart-stage"
-              :option="statusMixChartOption"
-              autoresize
-            />
-            <div v-else class="chart-empty">No status mix data</div>
-          </article>
-        </div>
+            <pre v-else class="ai-json-result">{{ formatJson(aiResult.visualization.data) }}</pre>
+          </div>
+          <div v-else class="ai-query-empty">Run a question to see the answer and chart.</div>
+        </aside>
       </section>
 
       <section class="orders-panel" aria-label="Filtered logistics orders">
@@ -203,12 +263,13 @@
 <script setup lang="ts">
 import axios from 'axios'
 import { use } from 'echarts/core'
-import { BarChart } from 'echarts/charts'
+import { BarChart, LineChart } from 'echarts/charts'
 import { GridComponent, TooltipComponent } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
 import { computed, onMounted, reactive, ref } from 'vue'
 import VChart from 'vue-echarts'
 import {
+  buildAiVisualizationChartOption,
   buildOrderVolumeChartOption,
   buildStatusMixChartOption,
   buildKpiQuery,
@@ -216,7 +277,7 @@ import {
   formatOnTimeRate,
 } from '@/utils/logistics-dashboard'
 
-use([BarChart, GridComponent, TooltipComponent, CanvasRenderer])
+use([BarChart, LineChart, GridComponent, TooltipComponent, CanvasRenderer])
 
 interface LogisticsFilters {
   carriers: string[]
@@ -279,6 +340,18 @@ interface LogisticsOrdersResponse {
   }
 }
 
+interface AiOrchestrationResponse {
+  question: string
+  selectedTool: 'forecast_category_demand' | 'query_logistics_analytics'
+  toolInput: Record<string, unknown>
+  result: unknown
+  explanation: string
+  visualization: {
+    type: 'line' | 'bar' | 'table' | 'kpi'
+    data: unknown
+  }
+}
+
 const emptyFilters: LogisticsFilters = {
   carriers: [],
   regions: [],
@@ -320,6 +393,25 @@ const isLoadingKpis = ref(false)
 const isLoadingCharts = ref(false)
 const isLoadingOrders = ref(false)
 const errorMessage = ref('')
+const aiQuestion = ref('Which carrier has the highest delay rate?')
+const aiResult = ref<AiOrchestrationResponse | null>(null)
+const isRunningAiQuery = ref(false)
+const aiQueryError = ref('')
+
+const aiShortcutPrompts = [
+  {
+    label: 'Delayed by week',
+    question: 'Show delayed orders by week in Q4',
+  },
+  {
+    label: 'Carrier delay rate',
+    question: 'Which carrier has the highest delay rate?',
+  },
+  {
+    label: 'Delayed in Q4',
+    question: 'How many delayed orders were there in Q4?',
+  },
+]
 
 const isBusy = computed(
   () =>
@@ -372,6 +464,28 @@ const orderVolumeChartOption = computed(() =>
 )
 
 const statusMixChartOption = computed(() => buildStatusMixChartOption(charts.value.statusMix))
+
+const aiVisualizationChartOption = computed(() => {
+  if (!aiResult.value) {
+    return null
+  }
+
+  return buildAiVisualizationChartOption(aiResult.value.visualization)
+})
+
+const aiKpiValue = computed(() => {
+  if (!aiResult.value || aiResult.value.visualization.type !== 'kpi') {
+    return ''
+  }
+
+  const value = getVisualizationValue(aiResult.value.visualization.data)
+
+  if (value === null) {
+    return ''
+  }
+
+  return formatAiMetricValue(value, aiResult.value.toolInput.metric)
+})
 
 onMounted(async () => {
   await Promise.all([loadFilters(), refreshDashboard()])
@@ -450,6 +564,34 @@ async function refreshDashboard() {
   await Promise.all([loadKpis(), loadCharts(), loadOrders()])
 }
 
+async function runAiQuery() {
+  const question = aiQuestion.value.trim()
+
+  if (!question) {
+    aiQueryError.value = 'Enter a question before running AI Query.'
+    return
+  }
+
+  isRunningAiQuery.value = true
+  aiQueryError.value = ''
+
+  try {
+    const response = await axios.post<AiOrchestrationResponse>('/api/ai/orchestrate', {
+      question,
+    })
+    aiResult.value = response.data
+  } catch (error) {
+    aiQueryError.value = getAiQueryErrorMessage(error)
+  } finally {
+    isRunningAiQuery.value = false
+  }
+}
+
+function runShortcutPrompt(question: string) {
+  aiQuestion.value = question
+  void runAiQuery()
+}
+
 function applyFilters() {
   ordersPagination.page = 1
   void refreshDashboard()
@@ -495,6 +637,69 @@ function setError(error: unknown) {
   errorMessage.value = error instanceof Error ? error.message : 'Dashboard request failed.'
 }
 
+function getAiQueryErrorMessage(error: unknown) {
+  if (axios.isAxiosError(error)) {
+    const status = error.response?.status
+    const responseMessage = getResponseMessage(error.response?.data)
+
+    if (status === 429) {
+      return responseMessage || '免费次数已用完'
+    }
+
+    if (status === 503) {
+      return responseMessage || 'Qwen API key is not configured.'
+    }
+
+    return responseMessage || 'AI Query request failed.'
+  }
+
+  return error instanceof Error ? error.message : 'AI Query request failed.'
+}
+
+function getResponseMessage(data: unknown) {
+  if (data !== null && typeof data === 'object' && 'message' in data) {
+    const message = data.message
+
+    if (typeof message === 'string') {
+      return message
+    }
+  }
+
+  return ''
+}
+
+function getVisualizationValue(data: unknown) {
+  if (data !== null && typeof data === 'object' && 'value' in data) {
+    const value = data.value
+
+    if (typeof value === 'number') {
+      return value
+    }
+  }
+
+  return null
+}
+
+function formatAiMetricValue(value: number, metric: unknown) {
+  if (metric === 'delay_rate' || metric === 'on_time_delivery_rate') {
+    return formatOnTimeRate(value)
+  }
+
+  if (metric === 'average_delivery_time_days') {
+    return formatAverageDeliveryTime(value)
+  }
+
+  if (metric === 'order_value') {
+    return formatCurrency(value)
+  }
+
+  return formatNumber(value)
+}
+
+function formatJson(value: unknown) {
+  return JSON.stringify(value, null, 2)
+}
+
 function formatInteger(value: number) {
   return new Intl.NumberFormat('en-US').format(value)
 }
@@ -504,6 +709,12 @@ function formatCurrency(value: number) {
     style: 'currency',
     currency: 'USD',
     maximumFractionDigits: 0,
+  }).format(value)
+}
+
+function formatNumber(value: number) {
+  return new Intl.NumberFormat('en-US', {
+    maximumFractionDigits: 2,
   }).format(value)
 }
 

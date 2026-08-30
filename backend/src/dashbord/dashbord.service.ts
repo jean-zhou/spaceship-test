@@ -1,20 +1,22 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, SelectQueryBuilder } from 'typeorm';
+import { Repository } from 'typeorm';
 import { CreateDashbordDto } from './dto/create-dashbord.dto.js';
 import type { LogisticsFiltersResponseDto } from './dto/logistics-filters.response.dto.js';
 import type {
   LogisticsOrdersQueryDto,
   LogisticsQueryDto,
 } from './dto/logistics-query.dto.js';
-import type {
-  LogisticsOrdersResponseDto,
-} from './dto/logistics-orders.response.dto.js';
+import type { LogisticsOrdersResponseDto } from './dto/logistics-orders.response.dto.js';
 import { LogisticsOrderItemDto } from './dto/logistics-orders.response.dto.js';
 import type { LogisticsChartsResponseDto } from './dto/logistics-charts.response.dto.js';
 import type { LogisticsKpisResponseDto } from './dto/logistics-kpis.response.dto.js';
 import { UpdateDashbordDto } from './dto/update-dashbord.dto.js';
 import { LogisticsOrder } from './entities/logistics-order.entity.js';
+import {
+  getLogisticsMonthsForRange,
+  LogisticsAnalyticsService,
+} from './logistics-analytics.service.js';
 
 interface RawLogisticsKpis {
   totalOrders: number | string | null;
@@ -27,7 +29,7 @@ interface RawMonthlyOrderVolume {
   month: string;
   orders: number | string | null;
 }
-  
+
 interface RawStatusMix {
   status: string;
   count: number | string | null;
@@ -38,6 +40,7 @@ export class DashbordService {
   constructor(
     @InjectRepository(LogisticsOrder)
     private readonly logisticsOrders: Repository<LogisticsOrder>,
+    private readonly logisticsAnalytics: LogisticsAnalyticsService,
   ) {}
 
   create(_createDashbordDto: CreateDashbordDto) {
@@ -73,10 +76,11 @@ export class DashbordService {
   async getLogisticsKpis(
     query: LogisticsQueryDto,
   ): Promise<LogisticsKpisResponseDto> {
-    const builder = this.applyLogisticsFilters(
-      this.logisticsOrders.createQueryBuilder('orders'),
-      query,
-    )
+    const builder = this.logisticsAnalytics
+      .applyLogisticsFilters(
+        this.logisticsOrders.createQueryBuilder('orders'),
+        query,
+      )
       .select('COUNT(*)', 'totalOrders')
       .addSelect(
         "SUM(CASE WHEN orders.status = 'delivered' THEN 1 ELSE 0 END)",
@@ -125,19 +129,21 @@ export class DashbordService {
     query: LogisticsQueryDto,
   ): Promise<LogisticsChartsResponseDto> {
     const [monthlyRows, statusRows] = await Promise.all([
-      this.applyLogisticsFilters(
-        this.logisticsOrders.createQueryBuilder('orders'),
-        query,
-      )
+      this.logisticsAnalytics
+        .applyLogisticsFilters(
+          this.logisticsOrders.createQueryBuilder('orders'),
+          query,
+        )
         .select("strftime('%Y-%m', orders.order_date)", 'month')
         .addSelect('COUNT(*)', 'orders')
         .groupBy('month')
         .orderBy('month', 'ASC')
         .getRawMany<RawMonthlyOrderVolume>(),
-      this.applyLogisticsFilters(
-        this.logisticsOrders.createQueryBuilder('orders'),
-        query,
-      )
+      this.logisticsAnalytics
+        .applyLogisticsFilters(
+          this.logisticsOrders.createQueryBuilder('orders'),
+          query,
+        )
         .select('orders.status', 'status')
         .addSelect('COUNT(*)', 'count')
         .groupBy('orders.status')
@@ -155,10 +161,12 @@ export class DashbordService {
     );
 
     return {
-      monthlyOrderVolume: getMonthsForRange(query.dateRange).map((month) => ({
-        month,
-        orders: monthlyCounts.get(month) ?? 0,
-      })),
+      monthlyOrderVolume: getLogisticsMonthsForRange(query.dateRange).map(
+        (month) => ({
+          month,
+          orders: monthlyCounts.get(month) ?? 0,
+        }),
+      ),
       statusMix: statusRows.map((row) => {
         const count = toNumber(row.count);
 
@@ -179,10 +187,11 @@ export class DashbordService {
     query: LogisticsOrdersQueryDto,
   ): Promise<LogisticsOrdersResponseDto> {
     const { page, pageSize } = query;
-    const [orders, total] = await this.applyLogisticsFilters(
-      this.logisticsOrders.createQueryBuilder('orders'),
-      query,
-    )
+    const [orders, total] = await this.logisticsAnalytics
+      .applyLogisticsFilters(
+        this.logisticsOrders.createQueryBuilder('orders'),
+        query,
+      )
       .orderBy('orders.order_date', 'DESC')
       .addOrderBy('orders.order_id', 'ASC')
       .skip((page - 1) * pageSize)
@@ -213,84 +222,6 @@ export class DashbordService {
 
     return rows.map((row) => row.value);
   }
-
-  private applyLogisticsFilters(
-    builder: SelectQueryBuilder<LogisticsOrder>,
-    query: LogisticsQueryDto,
-  ): SelectQueryBuilder<LogisticsOrder> {
-    const range = getDateRange(query.dateRange);
-
-    builder.andWhere('orders.order_date BETWEEN :startDate AND :endDate', {
-      startDate: range.startDate,
-      endDate: range.endDate,
-    });
-
-    this.applyExactFilter(builder, 'carrier', query.carrier);
-    this.applyExactFilter(builder, 'region', query.region);
-    this.applyExactFilter(builder, 'status', query.status);
-
-    if (query.search) {
-      builder.andWhere(
-        `
-          (
-            LOWER(orders.order_id) LIKE :search OR
-            LOWER(orders.client_id) LIKE :search OR
-            LOWER(orders.carrier) LIKE :search OR
-            LOWER(orders.origin_city) LIKE :search OR
-            LOWER(orders.destination_city) LIKE :search OR
-            LOWER(orders.sku) LIKE :search OR
-            LOWER(orders.product_category) LIKE :search OR
-            LOWER(orders.warehouse) LIKE :search
-          )
-        `,
-        { search: `%${query.search.toLowerCase()}%` },
-      );
-    }
-
-    return builder;
-  }
-
-  private applyExactFilter(
-    builder: SelectQueryBuilder<LogisticsOrder>,
-    column: 'carrier' | 'region' | 'status',
-    value: string | undefined,
-  ): void {
-    if (!value || value === 'all') {
-      return;
-    }
-
-    builder.andWhere(`orders.${column} = :${column}`, {
-      [column]: value,
-    });
-  }
-}
-
-function getDateRange(
-  dateRange: string | undefined,
-): { startDate: string; endDate: string } {
-  const fullYear = { startDate: '2025-01-01', endDate: '2025-12-31' };
-  const ranges: Record<string, { startDate: string; endDate: string }> = {
-    all: fullYear,
-    q1: { startDate: '2025-01-01', endDate: '2025-03-31' },
-    q2: { startDate: '2025-04-01', endDate: '2025-06-30' },
-    q3: { startDate: '2025-07-01', endDate: '2025-09-30' },
-    q4: { startDate: '2025-10-01', endDate: '2025-12-31' },
-  };
-
-  return dateRange ? (ranges[dateRange] ?? fullYear) : fullYear;
-}
-
-function getMonthsForRange(dateRange: string | undefined): string[] {
-  const { startDate, endDate } = getDateRange(dateRange);
-  const months: string[] = [];
-  const startMonth = Number(startDate.slice(5, 7));
-  const endMonth = Number(endDate.slice(5, 7));
-
-  for (let month = startMonth; month <= endMonth; month += 1) {
-    months.push(`2025-${String(month).padStart(2, '0')}`);
-  }
-
-  return months;
 }
 
 function toNumber(value: number | string | null | undefined): number {

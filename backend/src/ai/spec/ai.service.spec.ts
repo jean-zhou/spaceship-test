@@ -5,6 +5,7 @@ import { getRepositoryToken } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { AiService } from '../ai.service.js';
 import { LogisticsOrder } from '../../dashbord/entities/logistics-order.entity.js';
+import { LogisticsAnalyticsService } from '../../dashbord/logistics-analytics.service.js';
 
 describe('AiService category demand forecasting', () => {
   let module: TestingModule;
@@ -22,7 +23,7 @@ describe('AiService category demand forecasting', () => {
         }),
         TypeOrmModule.forFeature([LogisticsOrder]),
       ],
-      providers: [AiService],
+      providers: [AiService, LogisticsAnalyticsService],
     }).compile();
 
     service = module.get(AiService);
@@ -236,6 +237,183 @@ describe('AiService category demand forecasting', () => {
       methodology: {
         summary:
           'Uses simple linear regression over product-category monthly demand.',
+      },
+    });
+  });
+
+  it('returns delayed logistics orders grouped by order week', async () => {
+    await orders.save([
+      orderFixture({
+        orderId: 'ORD-WEEK-001',
+        orderDate: '2025-01-06',
+        status: 'delayed',
+      }),
+      orderFixture({
+        orderId: 'ORD-WEEK-002',
+        orderDate: '2025-01-07',
+        status: 'delayed',
+      }),
+      orderFixture({
+        orderId: 'ORD-WEEK-003',
+        orderDate: '2025-01-13',
+        status: 'delayed',
+      }),
+      orderFixture({
+        orderId: 'ORD-WEEK-004',
+        orderDate: '2025-01-14',
+        status: 'delivered',
+      }),
+    ]);
+
+    await expect(
+      service.queryLogisticsAnalytics({
+        queryType: 'time_series',
+        metric: 'delayed_orders',
+        groupBy: 'week',
+      }),
+    ).resolves.toEqual({
+      questionType: 'time_series',
+      metric: 'delayed_orders',
+      groupBy: 'week',
+      filters: {
+        dateRange: 'all',
+      },
+      rows: [
+        { group: '2025-W01', value: 2, delayedOrders: 2 },
+        { group: '2025-W02', value: 1, delayedOrders: 1 },
+      ],
+      summary: {
+        text: 'Found 3 delayed orders across 2 week groups.',
+      },
+      methodology: {
+        dateField: 'order_date',
+        defaultDateRange: '2025-01-01 through 2025-12-31',
+        delayDefinition: 'Orders with status = delayed.',
+      },
+    });
+  });
+
+  it('ranks carriers by delay rate', async () => {
+    await orders.save([
+      orderFixture({
+        orderId: 'ORD-CARRIER-001',
+        carrier: 'Atlas',
+        status: 'delayed',
+      }),
+      orderFixture({
+        orderId: 'ORD-CARRIER-002',
+        carrier: 'Atlas',
+        status: 'delivered',
+      }),
+      orderFixture({
+        orderId: 'ORD-CARRIER-003',
+        carrier: 'Boreal',
+        status: 'delayed',
+      }),
+      orderFixture({
+        orderId: 'ORD-CARRIER-004',
+        carrier: 'Boreal',
+        status: 'delayed',
+      }),
+      orderFixture({
+        orderId: 'ORD-CARRIER-005',
+        carrier: 'Boreal',
+        status: 'delivered',
+      }),
+      orderFixture({
+        orderId: 'ORD-CARRIER-006',
+        carrier: 'Cirrus',
+        status: 'in_transit',
+      }),
+    ]);
+
+    await expect(
+      service.queryLogisticsAnalytics({
+        queryType: 'ranking',
+        metric: 'delay_rate',
+        groupBy: 'carrier',
+        sortBy: 'metric',
+        sortDirection: 'desc',
+        limit: 1,
+      }),
+    ).resolves.toEqual({
+      questionType: 'ranking',
+      metric: 'delay_rate',
+      groupBy: 'carrier',
+      filters: {
+        dateRange: 'all',
+      },
+      rows: [
+        {
+          group: 'Boreal',
+          value: 66.7,
+          totalOrders: 3,
+          delayedOrders: 2,
+          rate: 66.7,
+        },
+      ],
+      summary: {
+        text: 'Top carrier by delay rate is Boreal at 66.7%.',
+      },
+      methodology: {
+        dateField: 'order_date',
+        defaultDateRange: '2025-01-01 through 2025-12-31',
+        delayDefinition: 'Orders with status = delayed.',
+      },
+    });
+  });
+
+  it('includes delivered-only carriers in delay rate rankings', async () => {
+    await orders.save([
+      orderFixture({
+        orderId: 'ORD-ZERO-DELAY-001',
+        carrier: 'Boreal',
+        status: 'delivered',
+      }),
+      orderFixture({
+        orderId: 'ORD-ZERO-DELAY-002',
+        carrier: 'Atlas',
+        status: 'delayed',
+      }),
+      orderFixture({
+        orderId: 'ORD-ZERO-DELAY-003',
+        carrier: 'Atlas',
+        status: 'delivered',
+      }),
+    ]);
+
+    await expect(
+      service.queryLogisticsAnalytics({
+        queryType: 'ranking',
+        metric: 'delay_rate',
+        groupBy: 'carrier',
+        sortBy: 'metric',
+        sortDirection: 'asc',
+        limit: 1,
+      }),
+    ).resolves.toEqual({
+      questionType: 'ranking',
+      metric: 'delay_rate',
+      groupBy: 'carrier',
+      filters: {
+        dateRange: 'all',
+      },
+      rows: [
+        {
+          group: 'Boreal',
+          value: 0,
+          totalOrders: 1,
+          delayedOrders: 0,
+          rate: 0,
+        },
+      ],
+      summary: {
+        text: 'Lowest carrier by delay rate is Boreal at 0%.',
+      },
+      methodology: {
+        dateField: 'order_date',
+        defaultDateRange: '2025-01-01 through 2025-12-31',
+        delayDefinition: 'Orders with status = delayed.',
       },
     });
   });

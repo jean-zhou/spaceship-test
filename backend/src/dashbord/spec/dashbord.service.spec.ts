@@ -4,6 +4,7 @@ import { Repository } from 'typeorm';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { DashbordService } from '../dashbord.service.js';
 import { LogisticsOrder } from '../entities/logistics-order.entity.js';
+import { LogisticsAnalyticsService } from '../logistics-analytics.service.js';
 
 describe('DashbordService logistics analytics', () => {
   let module: TestingModule;
@@ -21,7 +22,7 @@ describe('DashbordService logistics analytics', () => {
         }),
         TypeOrmModule.forFeature([LogisticsOrder]),
       ],
-      providers: [DashbordService],
+      providers: [DashbordService, LogisticsAnalyticsService],
     }).compile();
 
     service = module.get(DashbordService);
@@ -104,7 +105,9 @@ describe('DashbordService logistics analytics', () => {
   });
 
   it('treats dateRange all as the full 2025 order-date range', async () => {
-    await expect(service.getLogisticsKpis({ dateRange: 'all' })).resolves.toEqual({
+    await expect(
+      service.getLogisticsKpis({ dateRange: 'all' }),
+    ).resolves.toEqual({
       totalOrders: 4,
       deliveredOrders: 2,
       delayedOrders: 1,

@@ -7,6 +7,11 @@ import type {
 } from './dto/forecast-category-demand.request.dto.js';
 import type { ForecastCategoryDemandResponseDto } from './dto/forecast-category-demand.response.dto.js';
 import { LogisticsOrder } from '../dashbord/entities/logistics-order.entity.js';
+import type {
+  LogisticsAnalyticsRequest,
+  LogisticsAnalyticsResponse,
+} from '../dashbord/logistics-analytics.service.js';
+import { LogisticsAnalyticsService } from '../dashbord/logistics-analytics.service.js';
 
 interface RawMonthlyDemand {
   month: string;
@@ -23,6 +28,7 @@ export class AiService {
   constructor(
     @InjectRepository(LogisticsOrder)
     private readonly logisticsOrders: Repository<LogisticsOrder>,
+    private readonly logisticsAnalytics: LogisticsAnalyticsService,
   ) {}
 
   async forecastCategoryDemand(
@@ -55,6 +61,12 @@ export class AiService {
         : runLinearRegression(historical, months);
 
     return buildForecastResponse(category, method, historical, forecast);
+  }
+
+  async queryLogisticsAnalytics(
+    request: LogisticsAnalyticsRequest,
+  ): Promise<LogisticsAnalyticsResponse> {
+    return this.logisticsAnalytics.query(request);
   }
 
   private async getAvailableCategories(): Promise<string[]> {
@@ -98,7 +110,10 @@ function fillMissingMonths(points: DemandPoint[]): DemandPoint[] {
   const quantityByMonth = new Map(
     points.map((point) => [point.month, point.quantity]),
   );
-  const months = getMonthRange(points[0].month, points[points.length - 1].month);
+  const months = getMonthRange(
+    points[0].month,
+    points[points.length - 1].month,
+  );
 
   return months.map((month) => ({
     month,

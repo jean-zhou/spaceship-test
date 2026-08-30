@@ -6,6 +6,7 @@ describe('AiController forecasting endpoints', () => {
   let controller: AiController;
   let service: {
     forecastCategoryDemand: ReturnType<typeof vi.fn>;
+    queryLogisticsAnalytics: ReturnType<typeof vi.fn>;
   };
 
   beforeEach(async () => {
@@ -42,6 +43,31 @@ describe('AiController forecasting endpoints', () => {
           ],
         },
       }),
+      queryLogisticsAnalytics: vi.fn().mockResolvedValue({
+        questionType: 'ranking',
+        metric: 'delay_rate',
+        groupBy: 'carrier',
+        filters: {
+          dateRange: 'all',
+        },
+        rows: [
+          {
+            group: 'Boreal',
+            value: 66.7,
+            totalOrders: 3,
+            delayedOrders: 2,
+            rate: 66.7,
+          },
+        ],
+        summary: {
+          text: 'Top carrier by delay rate is Boreal at 66.7%.',
+        },
+        methodology: {
+          dateField: 'order_date',
+          defaultDateRange: '2025-01-01 through 2025-12-31',
+          delayDefinition: 'Orders with status = delayed.',
+        },
+      }),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -66,5 +92,32 @@ describe('AiController forecasting endpoints', () => {
       }),
     );
     expect(service.forecastCategoryDemand).toHaveBeenCalledWith(request);
+  });
+
+  it('passes logistics analytics queries to the service', async () => {
+    const request = {
+      queryType: 'ranking' as const,
+      metric: 'delay_rate' as const,
+      groupBy: 'carrier' as const,
+      sortBy: 'metric' as const,
+      sortDirection: 'desc' as const,
+      limit: 1,
+    };
+
+    await expect(controller.queryLogisticsAnalytics(request)).resolves.toEqual(
+      expect.objectContaining({
+        metric: 'delay_rate',
+        rows: [
+          {
+            group: 'Boreal',
+            value: 66.7,
+            totalOrders: 3,
+            delayedOrders: 2,
+            rate: 66.7,
+          },
+        ],
+      }),
+    );
+    expect(service.queryLogisticsAnalytics).toHaveBeenCalledWith(request);
   });
 });

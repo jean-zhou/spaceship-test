@@ -1,0 +1,266 @@
+import { BadRequestException } from '@nestjs/common';
+import { Test, TestingModule } from '@nestjs/testing';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { getRepositoryToken } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { AiService } from '../ai.service.js';
+import { LogisticsOrder } from '../../dashbord/entities/logistics-order.entity.js';
+
+describe('AiService category demand forecasting', () => {
+  let module: TestingModule;
+  let service: AiService;
+  let orders: Repository<LogisticsOrder>;
+
+  beforeEach(async () => {
+    module = await Test.createTestingModule({
+      imports: [
+        TypeOrmModule.forRoot({
+          type: 'better-sqlite3',
+          database: ':memory:',
+          entities: [LogisticsOrder],
+          synchronize: true,
+        }),
+        TypeOrmModule.forFeature([LogisticsOrder]),
+      ],
+      providers: [AiService],
+    }).compile();
+
+    service = module.get(AiService);
+    orders = module.get(getRepositoryToken(LogisticsOrder));
+  });
+
+  afterEach(async () => {
+    await module.close();
+  });
+
+  it('rejects an unsupported category and includes available categories', async () => {
+    await orders.save([
+      orderFixture({
+        orderId: 'ORD-PAPER-001',
+        orderDate: '2025-01-01',
+        productCategory: 'PAPER',
+        quantity: 10,
+      }),
+      orderFixture({
+        orderId: 'ORD-BRUSH-001',
+        orderDate: '2025-01-01',
+        productCategory: 'BRUSH',
+        quantity: 8,
+      }),
+    ]);
+
+    await expect(
+      service.forecastCategoryDemand({
+        category: 'unknown',
+        months: 1,
+        method: 'moving_average',
+      }),
+    ).rejects.toMatchObject({
+      response: {
+        message: 'Unsupported product category.',
+        availableCategories: ['BRUSH', 'PAPER'],
+      },
+    });
+  });
+
+  it('rejects categories with fewer than 3 historical months', async () => {
+    await orders.save([
+      orderFixture({
+        orderId: 'ORD-PAPER-001',
+        orderDate: '2025-01-01',
+        productCategory: 'PAPER',
+        quantity: 10,
+      }),
+      orderFixture({
+        orderId: 'ORD-PAPER-002',
+        orderDate: '2025-02-01',
+        productCategory: 'PAPER',
+        quantity: 20,
+      }),
+    ]);
+
+    await expect(
+      service.forecastCategoryDemand({
+        category: 'paper',
+        months: 1,
+        method: 'moving_average',
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    await expect(
+      service.forecastCategoryDemand({
+        category: 'paper',
+        months: 1,
+        method: 'moving_average',
+      }),
+    ).rejects.toMatchObject({
+      response: {
+        message:
+          'At least 3 months of historical category demand are required for forecasting.',
+      },
+    });
+  });
+
+  it('forecasts category demand with a rolling 3-month moving average', async () => {
+    await orders.save([
+      orderFixture({
+        orderId: 'ORD-PAPER-001',
+        orderDate: '2025-01-01',
+        productCategory: 'PAPER',
+        quantity: 10,
+      }),
+      orderFixture({
+        orderId: 'ORD-PAPER-002',
+        orderDate: '2025-01-15',
+        productCategory: 'PAPER',
+        quantity: 5,
+      }),
+      orderFixture({
+        orderId: 'ORD-PAPER-003',
+        orderDate: '2025-02-01',
+        productCategory: 'PAPER',
+        quantity: 30,
+      }),
+      orderFixture({
+        orderId: 'ORD-PAPER-004',
+        orderDate: '2025-04-01',
+        productCategory: 'PAPER',
+        quantity: 60,
+      }),
+      orderFixture({
+        orderId: 'ORD-BRUSH-001',
+        orderDate: '2025-04-01',
+        productCategory: 'BRUSH',
+        quantity: 999,
+      }),
+    ]);
+
+    await expect(
+      service.forecastCategoryDemand({
+        category: ' paper ',
+        months: 2,
+        method: 'moving_average',
+      }),
+    ).resolves.toEqual({
+      category: 'PAPER',
+      method: 'moving_average',
+      historyWindow: {
+        startMonth: '2025-01',
+        endMonth: '2025-04',
+        months: 4,
+      },
+      historical: [
+        { month: '2025-01', quantity: 15 },
+        { month: '2025-02', quantity: 30 },
+        { month: '2025-03', quantity: 0 },
+        { month: '2025-04', quantity: 60 },
+      ],
+      forecast: [
+        { month: '2025-05', quantity: 30 },
+        { month: '2025-06', quantity: 30 },
+      ],
+      visualization: {
+        series: [
+          { month: '2025-01', historical: 15, forecast: null },
+          { month: '2025-02', historical: 30, forecast: null },
+          { month: '2025-03', historical: 0, forecast: null },
+          { month: '2025-04', historical: 60, forecast: null },
+          { month: '2025-05', historical: null, forecast: 30 },
+          { month: '2025-06', historical: null, forecast: 30 },
+        ],
+      },
+      inventoryRecommendation: {
+        forecastTotal: 60,
+        safetyStock: 9,
+        recommendedStock: 69,
+        period: 'next 2 months',
+        rationale:
+          'Recommended stock equals forecast demand plus a 15% safety buffer.',
+      },
+      methodology: {
+        summary:
+          'Uses a 3-month moving average over product-category monthly demand.',
+        limitations: [
+          'Category-level only; SKU-level forecasting is not supported by the current sample size.',
+          'Uses historical logistics order quantities only.',
+          'Does not model seasonality, promotions, lead time, current stock, or stockouts.',
+        ],
+      },
+    });
+  });
+
+  it('forecasts category demand with simple linear regression', async () => {
+    await orders.save([
+      orderFixture({
+        orderId: 'ORD-PAPER-001',
+        orderDate: '2025-01-01',
+        productCategory: 'PAPER',
+        quantity: 10,
+      }),
+      orderFixture({
+        orderId: 'ORD-PAPER-002',
+        orderDate: '2025-02-01',
+        productCategory: 'PAPER',
+        quantity: 20,
+      }),
+      orderFixture({
+        orderId: 'ORD-PAPER-003',
+        orderDate: '2025-03-01',
+        productCategory: 'PAPER',
+        quantity: 30,
+      }),
+    ]);
+
+    await expect(
+      service.forecastCategoryDemand({
+        category: 'PAPER',
+        months: 2,
+        method: 'linear_regression',
+      }),
+    ).resolves.toMatchObject({
+      category: 'PAPER',
+      method: 'linear_regression',
+      historical: [
+        { month: '2025-01', quantity: 10 },
+        { month: '2025-02', quantity: 20 },
+        { month: '2025-03', quantity: 30 },
+      ],
+      forecast: [
+        { month: '2025-04', quantity: 40 },
+        { month: '2025-05', quantity: 50 },
+      ],
+      inventoryRecommendation: {
+        forecastTotal: 90,
+        safetyStock: 14,
+        recommendedStock: 104,
+      },
+      methodology: {
+        summary:
+          'Uses simple linear regression over product-category monthly demand.',
+      },
+    });
+  });
+});
+
+function orderFixture(overrides: Partial<LogisticsOrder>): LogisticsOrder {
+  const order = new LogisticsOrder();
+
+  order.clientId = 'CLIENT-1';
+  order.orderId = 'ORD-DEFAULT';
+  order.orderDate = '2025-01-01';
+  order.deliveryDate = '2025-01-02';
+  order.carrier = 'FedEx';
+  order.originCity = 'New York';
+  order.destinationCity = 'Boston';
+  order.status = 'delivered';
+  order.sku = 'PAPER-001';
+  order.productCategory = 'PAPER';
+  order.quantity = 1;
+  order.unitPriceUsd = 10;
+  order.orderValueUsd = 10;
+  order.isPromo = false;
+  order.promoDiscountPct = 0;
+  order.region = 'US-E';
+  order.warehouse = 'NYC-FC1';
+
+  return Object.assign(order, overrides);
+}

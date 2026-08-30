@@ -64,6 +64,7 @@ jobs:
           username: ${{ secrets.JEAN_TEST_SERVER_USER }}
           key: ${{ secrets.JEAN_TEST_SERVER_SSH_PRIVATE_KEY }}
           port: ${{ secrets.JEAN_TEST_SERVER_PORT }}
+          command_timeout: 60m
           script: |
             set -e
 

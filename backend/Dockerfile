@@ -1,10 +1,6 @@
-FROM node:24-bookworm-slim AS build
+FROM node:24-bookworm AS build
 
 WORKDIR /usr/src/app
-
-RUN apt-get update \
-  && apt-get install -y --no-install-recommends python3 make g++ \
-  && rm -rf /var/lib/apt/lists/*
 
 COPY package*.json ./
 RUN npm ci
